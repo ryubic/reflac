@@ -1,89 +1,172 @@
-# FLAC Integrity Checker
+# FLAC Integrity Checker (FICPRO)
 
-## Overview
-FLAC Integrity Checker is a robust and efficient tool for verifying the integrity of FLAC files. It supports parallel processing, detailed error reporting, and MD5 checksum verification to ensure the accuracy of your FLAC files.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+![Python 3.6+](https://img.shields.io/badge/python-3.6+-green.svg)
+![Version 1.2.0](https://img.shields.io/badge/version-1.2.0-orange)
+
+A robust tool for verifying FLAC file integrity with parallel processing, comprehensive error reporting, and logging capabilities.
 
 ## Features
-- **Parallel Processing**: Uses multiple threads to speed up verification.
-- **FLAC Verification**: Uses `flac -t` to check file integrity.
-- **MD5 Checksum Verification**: Ensures file consistency via `metaflac --show-md5sum`.
-- **Error Handling**: Provides detailed error messages for failed files.
-- **Progress Indicator**: Supports `tqdm` for progress tracking (optional).
-- **Cross-platform Compatibility**: Works on Linux, macOS, and Windows.
+
+- Parallel processing for efficient verification of large music collections
+- Comprehensive error detection and reporting
+- MD5 checksum verification
+- Colorized console output (when supported)
+- Detailed logging functionality
+- Progress bar visualization (with tqdm)
+- Robust error handling and recovery mechanisms
+- Read-only file operations for data safety
 
 ## Requirements
-Ensure the following dependencies are installed:
-- Python 3.6+
-- `flac` (command-line tool)
-- `metaflac` (metadata tool for FLAC files)
-- `tqdm` (optional, for progress display)
 
-### Installation of Dependencies
-On Linux:
-```sh
-sudo apt install flac  # Debian-based
-sudo dnf install flac  # Fedora-based
-```
-On macOS:
-```sh
-brew install flac
-```
-On Windows:
-Ensure `flac.exe` and `metaflac.exe` are in your system's `PATH`.
+- Python 3.6 or higher
+- FLAC command-line tools:
+  - `flac` - FLAC encoder/decoder
+  - `metaflac` - FLAC metadata editor/viewer
 
-To install `tqdm` for progress tracking:
-```sh
-pip install tqdm
+Optional dependencies:
+- `colorama` - For colorized terminal output
+- `tqdm` - For progress bar display
+
+## Installation
+
+1. Clone this repository:
+```bash
+git clone https://github.com/rubic-codes/FLAC-Integrity-Checker.git
+cd FLAC-Integrity-Checker
 ```
+
+2. Install optional Python dependencies:
+```bash
+pip install colorama tqdm
+```
+
+3. Ensure FLAC tools are installed on your system:
+   - **Linux**: `sudo apt-get install flac` (or equivalent for your distribution)
+   - **macOS**: `brew install flac`
+   - **Windows**: Download from [FLAC official website](https://xiph.org/flac/download.html) and add to PATH
 
 ## Usage
-To run the FLAC Integrity Checker in the current directory:
-```sh
-python FIC.py
+
+### Basic Usage
+
+```bash
+# Scan current directory
+python FICPRO.py
+
+# Scan specific directory
+python FICPRO.py -d /path/to/music/collection
+
+# Create a log file during scan
+python FICPRO.py -l
+
+# Scan specific directory and create log
+python FICPRO.py -d /path/to/music/collection -l
+
+# Enable verbose output
+python FICPRO.py -v
 ```
 
-### Options
-- **Environment Variables:**
-  - `DEBUG_FLAC_CHECKER=1` Enables detailed error traceback.
+### Command-line Arguments
 
-## How It Works
-1. **File Discovery**: Scans for FLAC files in the specified directory.
-2. **Accessibility Check**: Ensures files are readable and valid.
-3. **FLAC Verification**: Runs `flac -t` to check file integrity.
-4. **MD5 Verification**: Uses `metaflac --show-md5sum` to validate checksums.
-5. **Parallel Processing**: Uses multiple threads for efficiency.
-6. **Results Summary**: Displays passed, failed, and missing MD5 checksum files.
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `-d`, `--directory` | Directory to scan | Current directory |
+| `-l`, `--log` | Create a log file | Disabled |
+| `-v`, `--verbose` | Enable verbose output | Disabled |
+| `--version` | Show version information | - |
 
-## Example Output
+## Output
+
+The tool provides a comprehensive summary of verification results:
+
+- Total files checked
+- Files that passed verification
+- Files that failed verification (with error details)
+- Files without MD5 checksums
+- Log file path (if created)
+
+Example output:
 ```
-FLAC INTEGRITY CHECKER
-----------------------
+==================================================================================
+                         FLAC INTEGRITY CHECKER v1.2.0                         
+                 Verify the integrity of your FLAC audio files                 
+==================================================================================
+
+Target directory: /path/to/music
 Searching for FLAC files...
-Found 120 files.
-Starting verification using 8 threads...
+Found 1532 FLAC files
+Starting verification using 6 threads...
+[████████████████████████████████████] 1532/1532 [02:14<00:00]
 
-Verification Summary
-----------------------
-Total files checked: 120
-Passed verification: 115
+Verification Complete
+-------------------------- Verification Summary ---------------------------
+Total files checked: 1532
+Passed verification: 1527
 Failed verification: 3
 Files without MD5: 2
-
+Log file created: flac_check_20250329_123456.log
+------------------------------------------------------------------------
 Failed files:
-1. /music/album1/track3.flac
-   ERROR: Corrupt FLAC stream
-2. /music/album2/track7.flac
-   ERROR: Read error
+1. /path/to/music/album/corrupted_track.flac
+   ERROR: md5sum mismatch in frame -12 expected: eb5dca41142c9ebcc75ea994ac5d3215
+2. /path/to/music/album2/bad_file.flac
+   File inaccessible or unreadable
+3. /path/to/music/album3/broken_metadata.flac
+   ERROR: invalid metadata
+------------------------------------------------------------------------
+Files without MD5 checksums:
+1. /path/to/music/old_album/track01.flac
+2. /path/to/music/old_album/track02.flac
+------------------------------------------------------------------------
 ```
 
+## Error Codes
+
+The program exits with the following status codes:
+- `0`: All files passed verification or no files found
+- `1`: One or more files failed verification, dependency check failed, or program error
+
+## Logging
+
+When enabled with the `-l` flag, the program creates a timestamped log file that includes:
+- Program start and configuration details
+- File discovery information
+- Verification results for each file
+- Error details and stack traces (in debug mode)
+- Final summary
+
+## Advanced Configuration
+
+The following environment variables can be set:
+- `DEBUG_FLAC_CHECKER=1` - Enable detailed error tracebacks in logs
+
+## How It Works
+
+1. Searches recursively for `.flac` files in the specified directory
+2. Utilizes multiple threads for parallel processing
+3. For each file:
+   - Performs accessibility checks
+   - Runs `flac -t` for integrity verification (read-only)
+   - Uses `metaflac --show-md5sum` to verify internal MD5 checksums
+4. Collects results and generates comprehensive reports
+
 ## Troubleshooting
-- **Command Not Found:** Ensure `flac` and `metaflac` are installed and in your `PATH`.
-- **Permission Errors:** Run with appropriate file permissions.
-- **False Negatives:** Try increasing `MAX_RETRIES` in the script.
+
+- **Missing dependencies**: Ensure `flac` and `metaflac` are installed and in your PATH
+- **Permission errors**: Ensure you have read access to the files and directories
+- **Slow performance**: Consider optimizing thread count based on your system
+- **Out of memory**: For extremely large collections, scan subdirectories separately
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request to the [FLAC Integrity Checker repository](https://github.com/rubic-codes/FLAC-Integrity-Checker).
 
 ## License
-This project is open-source and released under the MIT License.
 
-## Contributions
-Feel free to submit pull requests or report issues to improve the tool!
+This project is licensed under the MIT License - see the LICENSE file for details.
 
+## Acknowledgments
+
+- The FLAC project for their excellent audio codec and tools
+- All contributors and testers who have provided feedback
