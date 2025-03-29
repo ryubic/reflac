@@ -1,4 +1,4 @@
-# FLAC Integrity Checker (FICPRO)
+# FLAC Integrity Checker (FIC)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 ![Python 3.6+](https://img.shields.io/badge/python-3.6+-green.svg)
@@ -52,19 +52,19 @@ pip install colorama tqdm
 
 ```bash
 # Scan current directory
-python FICPRO.py
+python FIC.py
 
 # Scan specific directory
-python FICPRO.py -d /path/to/music/collection
+python FIC.py -d /path/to/music/collection
 
 # Create a log file during scan
-python FICPRO.py -l
+python FIC.py -l
 
 # Scan specific directory and create log
-python FICPRO.py -d /path/to/music/collection -l
+python FIC.py -d /path/to/music/collection -l
 
 # Enable verbose output
-python FICPRO.py -v
+python FIC.py -v
 ```
 
 ### Command-line Arguments
