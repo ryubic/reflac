@@ -1,166 +1,247 @@
-# FLAC Integrity Checker (FIC)
+# FLAC Integrity Checker
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 ![Python 3.6+](https://img.shields.io/badge/python-3.6+-green.svg)
-![Version 1.2.0](https://img.shields.io/badge/version-1.2.0-orange)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/rubic-codes/FLAC-Integrity-Checker)
 
-A robust tool for verifying FLAC file integrity with parallel processing, comprehensive error reporting, and logging capabilities.
+A robust command-line tool for verifying the integrity of FLAC audio files with parallel processing, comprehensive error reporting, and logging capabilities.
 
 ## Features
 
-- Parallel processing for efficient verification of large music collections
-- Comprehensive error detection and reporting
-- MD5 checksum verification
-- Colorized console output (when supported)
-- Detailed logging functionality
-- Progress bar visualization (with tqdm)
-- Robust error handling and recovery mechanisms
-- Read-only file operations for data safety
-
-## Requirements
-
-- Python 3.6 or higher
-- FLAC command-line tools:
-  - `flac` - FLAC encoder/decoder
-  - `metaflac` - FLAC metadata editor/viewer
-
-Optional dependencies:
-- `colorama` - For colorized terminal output
-- `tqdm` - For progress bar display
+- **Thorough FLAC verification**: Tests the integrity of FLAC files using the official FLAC tools
+- **MD5 checksum validation**: Verifies embedded MD5 checksums in FLAC files
+- **Multi-threaded processing**: Automatically utilizes multiple CPU cores for faster verification
+- **Detailed reporting**: Provides comprehensive results including detailed error messages
+- **Color-coded output**: Uses color to highlight important information (when supported)
+- **Progress tracking**: Shows real-time progress during verification process
+- **Logging support**: Optional logging to file for record-keeping
+- **File statistics**: Displays breakdown of file types found during scan
+- **Safe read-only operations**: Never modifies your audio files
+- **Robust error handling**: Includes retries for transient errors and comprehensive error reporting
 
 ## Installation
 
-1. Clone this repository:
+### Prerequisites
+
+This tool requires Python 3.6 or later and the FLAC command-line tools:
+
+- `flac`: The official FLAC encoder/decoder
+- `metaflac`: FLAC metadata editor
+
+#### Installing FLAC tools
+
+**Windows:**
+- Download the FLAC tools from https://xiph.org/flac/download.html
+- Add the installation directory to your PATH environment variable
+
+**macOS:**
 ```bash
-git clone https://github.com/rubic-codes/FLAC-Integrity-Checker.git
-cd FLAC-Integrity-Checker
+brew install flac
 ```
 
-2. Install optional Python dependencies:
+**Linux:**
 ```bash
-pip install colorama tqdm
+# Ubuntu/Debian
+sudo apt install flac
+
+# Fedora
+sudo dnf install flac
+
+# Arch Linux
+sudo pacman -S flac
 ```
 
-3. Ensure FLAC tools are installed on your system:
-   - **Linux**: `sudo apt-get install flac` (or equivalent for your distribution)
-   - **macOS**: `brew install flac`
-   - **Windows**: Download from [FLAC official website](https://xiph.org/flac/download.html) and add to PATH
+### Installing the Script
+
+1. Clone the repository or download the script:
+   ```bash
+   git clone https://github.com/rubic-codes/FLAC-Integrity-Checker.git
+   cd FLAC-Integrity-Checker
+   ```
+
+2. Make it executable (Linux/macOS):
+   ```bash
+   chmod +x FIC.py
+   ```
+
+3. Optional: Install the progress bar library for better output:
+   ```bash
+   pip install tqdm
+   ```
+
+4. Optional: Install colorama for colored output on Windows:
+   ```bash
+   pip install colorama
+   ```
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Scan current directory
 python FIC.py
+```
+This will scan the current directory and all subdirectories for FLAC files.
 
-# Scan specific directory
-python FIC.py -d /path/to/music/collection
+### Scan a Specific Directory
 
-# Create a log file during scan
+```bash
+python FIC.py -d "/path/to/music collection"
+```
+
+### Create a Log File
+
+```bash
 python FIC.py -l
-
-# Scan specific directory and create log
-python FIC.py -d /path/to/music/collection -l
-
-# Enable verbose output
-python FIC.py -v
 ```
 
-### Command-line Arguments
+### Verbose Output with Logging
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `-d`, `--directory` | Directory to scan | Current directory |
-| `-l`, `--log` | Create a log file | Disabled |
-| `-v`, `--verbose` | Enable verbose output | Disabled |
-| `--version` | Show version information | - |
-
-## Output
-
-The tool provides a comprehensive summary of verification results:
-
-- Total files checked
-- Files that passed verification
-- Files that failed verification (with error details)
-- Files without MD5 checksums
-- Log file path (if created)
-
-Example output:
+```bash
+python FIC.py -d "/path/to/music" -l -v
 ```
-==================================================================================
-                         FLAC INTEGRITY CHECKER v1.2.0                         
-                 Verify the integrity of your FLAC audio files                 
-==================================================================================
+
+### Command-line Options
+
+```
+usage: FIC.py [-h] [-d DIRECTORY] [-l] [-v] [--version]
+
+FLAC Integrity Checker  - Verify the integrity of FLAC audio files
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -d DIRECTORY, --directory DIRECTORY
+                        Directory to scan (default: current directory)
+  -l, --log             Create a log file of the verification process
+  -v, --verbose         Enable verbose output
+  --version             show program's version number and exit
+```
+
+## Understanding the Results
+
+The tool provides a detailed summary after scanning:
+
+- **Passed verification**: Files that passed both FLAC structure and MD5 checksum verification
+- **Failed verification**: Files with structural errors or corrupted data
+- **Files without MD5**: Files that are structurally valid but don't have an MD5 checksum embedded
+
+### Example Output
+
+```
+===============================================================================
+                       FLAC INTEGRITY CHECKER v1.2.1                        
+                Verify the integrity of your FLAC audio files                
+===============================================================================
 
 Target directory: /path/to/music
-Searching for FLAC files...
-Found 1532 FLAC files
-Starting verification using 6 threads...
-[████████████████████████████████████] 1532/1532 [02:14<00:00]
+Searching for files...
+
+---------------- Files Found ----------------
+Audio:
+  flac: 1250     mp3: 84        wav: 12       
+  m4a: 5         
+
+Images:
+  jpg: 145       png: 28        
+
+Text/Docs:
+  txt: 15        log: 8         cue: 5        
+
+Archives:
+  zip: 2         
+
+Other:
+  Other files: 7
+------------------------------------------
+Total files: 1561
+------------------------------------------
+
+Starting verification of 1250 FLAC files
+Using 12 threads for verification...
+[████████████████████████████████████████] 1250/1250 [00:43<00:00]
 
 Verification Complete
--------------------------- Verification Summary ---------------------------
-Total files checked: 1532
-Passed verification: 1527
-Failed verification: 3
-Files without MD5: 2
-Log file created: flac_check_20250329_123456.log
-------------------------------------------------------------------------
+
+---------------- Verification Summary ----------------
+Total files checked: 1250
+Passed verification: 1247
+Failed verification: 2
+Files without MD5: 1
+Log file created: flac_check_20250331_123045.log
+--------------------------------------------------
 Failed files:
-1. /path/to/music/album/corrupted_track.flac
-   ERROR: md5sum mismatch in frame -12 expected: eb5dca41142c9ebcc75ea994ac5d3215
-2. /path/to/music/album2/bad_file.flac
-   File inaccessible or unreadable
-3. /path/to/music/album3/broken_metadata.flac
-   ERROR: invalid metadata
-------------------------------------------------------------------------
+1. /path/to/music/Album/Track01.flac
+   stream decoder error: CRC mismatch
+2. /path/to/music/Compilation/Track05.flac
+   stream decoder error: unexpected EOF
+--------------------------------------------------
 Files without MD5 checksums:
-1. /path/to/music/old_album/track01.flac
-2. /path/to/music/old_album/track02.flac
-------------------------------------------------------------------------
+1. /path/to/music/Recently Added/NewAlbum/Track02.flac
+--------------------------------------------------
 ```
 
-## Error Codes
+## Interpreting Errors
 
-The program exits with the following status codes:
-- `0`: All files passed verification or no files found
-- `1`: One or more files failed verification, dependency check failed, or program error
+Common error messages and their meanings:
 
-## Logging
+1. **CRC mismatch**: Data corruption has occurred, the file's CRC checksum doesn't match the calculated value
+2. **Unexpected EOF**: The file is truncated or incomplete
+3. **Wrong sync code**: The file structure is damaged, possibly due to disk errors or incomplete downloads
+4. **Metadata failure**: The metadata blocks are corrupted
+5. **File inaccessible or unreadable**: Permission issues or file system problems
 
-When enabled with the `-l` flag, the program creates a timestamped log file that includes:
-- Program start and configuration details
-- File discovery information
-- Verification results for each file
-- Error details and stack traces (in debug mode)
-- Final summary
+## Exit Codes
 
-## Advanced Configuration
+The program returns the following exit codes:
 
-The following environment variables can be set:
-- `DEBUG_FLAC_CHECKER=1` - Enable detailed error tracebacks in logs
-
-## How It Works
-
-1. Searches recursively for `.flac` files in the specified directory
-2. Utilizes multiple threads for parallel processing
-3. For each file:
-   - Performs accessibility checks
-   - Runs `flac -t` for integrity verification (read-only)
-   - Uses `metaflac --show-md5sum` to verify internal MD5 checksums
-4. Collects results and generates comprehensive reports
+- `0`: All files passed verification (or no FLAC files were found)
+- `1`: One or more files failed verification or the program encountered an error
 
 ## Troubleshooting
 
-- **Missing dependencies**: Ensure `flac` and `metaflac` are installed and in your PATH
-- **Permission errors**: Ensure you have read access to the files and directories
-- **Slow performance**: Consider optimizing thread count based on your system
-- **Out of memory**: For extremely large collections, scan subdirectories separately
+### Missing Dependencies
+
+If you receive an error about missing commands:
+
+```
+Error: The following tools are required but not found:
+  • flac
+  • metaflac
+```
+
+Make sure you have installed the FLAC tools as described in the Prerequisites section.
+
+### Permission Issues
+
+If files fail with "File inaccessible or unreadable" errors:
+- Ensure you have read permissions for the files and directories
+- Try running the script with elevated privileges if necessary
+
+### Path Issues on Windows
+
+If you encounter problems with paths containing spaces on Windows:
+- Make sure to use double quotes around the directory path:
+  ```
+  python FIC.py -d "C:\My Music Collection"
+  ```
+
+## Advanced Usage
+
+### Environment Variables
+
+- `DEBUG_FLAC_CHECKER`: Set this environment variable to any value to include stack traces in error logs
+
+### Integration with Other Tools
+
+The exit code can be used to integrate with other scripts or notification systems:
+
+```bash
+python FIC.py && echo "All files verified successfully" || echo "Some files failed verification"
+```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request to the [FLAC Integrity Checker repository](https://github.com/rubic-codes/FLAC-Integrity-Checker).
+Contributions are welcome! Please feel free to submit a Pull Request on the [GitHub repository](https://github.com/rubic-codes/FLAC-Integrity-Checker).
 
 ## License
 

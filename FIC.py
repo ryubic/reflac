@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import traceback
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
@@ -30,7 +31,7 @@ except ImportError:
     tqdm = None
 
 # Constants
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 MAX_THREADS = 32  # Safety limit for maximum threads
 MAX_RETRIES = 2  # Number of retries for failed operations
 FILE_READ_CHUNK = 8192  # Chunk size for file reading checks
@@ -246,21 +247,43 @@ def verify_flac(file_path: str) -> VerificationResult:
             
     return VerificationResult(file_path, 'failed', last_error)
 
-def find_flac_files(root_dir: str) -> List[str]:
-    """Find all FLAC files in directory tree with robust error handling."""
+def find_files(root_dir: str) -> Tuple[List[str], Dict[str, int]]:
+    """Find all files in directory tree with file type counting."""
     flac_files = []
+    file_types = Counter()
+    total_files = 0
     
     try:
         root_path = Path(root_dir).resolve()
         if logging.getLogger().isEnabledFor(logging.INFO):
-            logging.info(f"Searching for FLAC files in: {root_path}")
+            logging.info(f"Searching for files in: {root_path}")
         
-        for path in root_path.rglob('*.flac'):
+        # Track extensions we want to specifically count
+        tracked_extensions = {
+            '.flac', '.mp3', '.wav', '.aac', '.m4a', '.ogg',  # audio
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp',  # images
+            '.mp4', '.mkv', '.avi', '.mov', '.wmv',  # video
+            '.lrc', '.txt', '.log', '.cue', '.pdf',  # text/docs
+            '.zip', '.rar', '.7z', '.tar', '.gz'  # archives
+        }
+        
+        for path in root_path.rglob('*'):
             try:
                 if path.is_file() and is_file_accessible(str(path)):
-                    flac_files.append(str(path))
-                    if logging.getLogger().isEnabledFor(logging.DEBUG):
-                        logging.debug(f"Found FLAC file: {path}")
+                    total_files += 1
+                    ext = path.suffix.lower()
+                    
+                    # Count all extensions, but for display, prioritize tracked ones
+                    if ext in tracked_extensions:
+                        file_types[ext] += 1
+                    else:
+                        file_types['other'] += 1
+                    
+                    # Add FLAC files to the processing list
+                    if ext == '.flac':
+                        flac_files.append(str(path))
+                        if logging.getLogger().isEnabledFor(logging.DEBUG):
+                            logging.debug(f"Found FLAC file: {path}")
             except (OSError, PermissionError, UnicodeError) as e:
                 if logging.getLogger().isEnabledFor(logging.DEBUG):
                     logging.debug(f"Error accessing {path}: {str(e)}")
@@ -270,7 +293,10 @@ def find_flac_files(root_dir: str) -> List[str]:
         if logging.getLogger().isEnabledFor(logging.ERROR):
             logging.error(f"Error scanning directory {root_dir}: {str(e)}")
     
-    return flac_files
+    # Add total count
+    file_types['total'] = total_files
+    
+    return flac_files, file_types
 
 def check_dependencies() -> bool:
     """Verify required tools are available in system PATH."""
@@ -285,6 +311,20 @@ def check_dependencies() -> bool:
         print(colors.colorize("Error: The following tools are required but not found:", 'orange_red'))
         for cmd in missing:
             print(f"  • {cmd}")
+        
+        # Additional help message for common platforms
+        if 'flac' in missing or 'metaflac' in missing:
+            print("\nInstallation help:")
+            if sys.platform == 'win32':
+                print("  Windows: Download FLAC from https://xiph.org/flac/download.html")
+                print("           Make sure to add it to your PATH or place in the same directory")
+            elif sys.platform == 'darwin':
+                print("  macOS: Install with Homebrew: brew install flac")
+            else:
+                print("  Linux: Install with your package manager:")
+                print("         Ubuntu/Debian: sudo apt install flac")
+                print("         Fedora: sudo dnf install flac")
+                print("         Arch: sudo pacman -S flac")
         
         if logging.getLogger().isEnabledFor(logging.ERROR):
             logging.error(f"Missing required tools: {', '.join(missing)}")
@@ -301,6 +341,56 @@ def print_header(version: str) -> None:
     print(colors.colorize(title.center(width), 'purple'))
     print(colors.colorize("Verify the integrity of your FLAC audio files".center(width), 'purple'))
     print("=" * width + "\n")
+
+def print_file_table(file_types: Dict[str, int]) -> None:
+    """Print a table of file types found during scanning."""
+    if not file_types:
+        return
+    
+    width = 60
+    print(f"\n{' Files Found ':-^{width}}")
+    
+    # Format table rows
+    table_data = []
+    
+    # Organize extensions into categories
+    categories = {
+        "Audio": ['.flac', '.mp3', '.wav', '.aac', '.m4a', '.ogg'],
+        "Images": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'],
+        "Video": ['.mp4', '.mkv', '.avi', '.mov', '.wmv'],
+        "Text/Docs": ['.lrc', '.txt', '.log', '.cue', '.pdf'],
+        "Archives": ['.zip', '.rar', '.7z', '.tar', '.gz'],
+    }
+    
+    # Print by category
+    for category, extensions in categories.items():
+        category_count = 0
+        category_items = []
+        
+        for ext in extensions:
+            count = file_types.get(ext, 0)
+            if count > 0:
+                category_count += count
+                category_items.append(f"{ext[1:]}: {count}")
+        
+        if category_count > 0:
+            print(colors.colorize(f"{category}:", 'purple'))
+            # Print in rows of 3 items
+            items_per_row = 3
+            for i in range(0, len(category_items), items_per_row):
+                row_items = category_items[i:i+items_per_row]
+                print("  " + "  ".join(f"{item:<15}" for item in row_items))
+    
+    # Print other files if any
+    other_count = file_types.get('other', 0)
+    if other_count > 0:
+        print(colors.colorize("Other:", 'purple'))
+        print(f"  Other files: {other_count}")
+    
+    # Print total
+    print("-" * width)
+    print(colors.colorize(f"Total files: {file_types.get('total', 0)}", 'green'))
+    print("-" * width + "\n")
 
 def print_summary(results: Dict[str, int], 
                 failed_files: List[Tuple[str, str]], 
@@ -337,6 +427,30 @@ def print_summary(results: Dict[str, int],
             relative_path = os.path.relpath(file)
             print(f"{colors.colorize(f'{i}.', 'yellow')} {colors.colorize(relative_path, 'yellow')}")
         print('-' * width)
+
+def normalize_path(path: str) -> str:
+    """
+    Normalize path by handling quotes, trailing slashes and converting to absolute path properly.
+    Works with both Windows and Unix-style paths.
+    """
+    if not path:
+        return os.path.abspath('.')
+    
+    # Remove any surrounding quotes that might have been passed through
+    path = path.strip('"\'')
+    
+    # Handle paths with spaces or special characters
+    try:
+        # Convert to Path object which handles OS-specific path formatting
+        path_obj = Path(path)
+        
+        # Convert back to string and get absolute path
+        abs_path = os.path.abspath(str(path_obj))
+        
+        return abs_path
+    except Exception as e:
+        # If there's any error, fall back to a simple approach
+        return os.path.abspath(path)
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -382,47 +496,56 @@ def main() -> None:
         if not check_dependencies():
             sys.exit(1)
         
-        # Get target directory
+        # Get target directory - properly normalize the path
         try:
-            target_dir = os.path.abspath(args.directory)
+            target_dir = normalize_path(args.directory)
             print(f"Target directory: {target_dir}")
             
             # Check if directory exists
             if not os.path.isdir(target_dir):
                 print(colors.colorize(f"Error: Directory not found: {target_dir}", 'orange_red'))
+                print(colors.colorize("Try using double quotes around directory paths with spaces:", 'orange_red'))
+                print(f'  Example: python {sys.argv[0]} -d "Your Folder Name"')
+                
                 if args.log:
                     logging.error(f"Directory not found: {target_dir}")
                 sys.exit(1)
         except Exception as e:
             print(colors.colorize(f"Error processing directory path: {str(e)}", 'orange_red'))
+            print(colors.colorize("Try using double quotes around directory paths with spaces:", 'orange_red'))
+            print(f'  Example: python {sys.argv[0]} -d "Your Folder Name"')
+            
             if args.log:
                 logging.error(f"Error processing directory path: {str(e)}")
             sys.exit(1)
             
-        print("Searching for FLAC files...")
+        print("Searching for files...")
         
         try:
-            flac_files = find_flac_files(target_dir)
+            flac_files, file_types = find_files(target_dir)
         except Exception as e:
             print(colors.colorize(f"Error searching for files: {str(e)}", 'orange_red'))
             if args.log:
                 logging.error(f"Error searching for files: {str(e)}")
             sys.exit(1)
         
+        # Print file type statistics
+        print_file_table(file_types)
+        
         if not flac_files:
-            print(colors.colorize("No FLAC files found.", 'yellow'))
+            print(colors.colorize("No FLAC files found for verification.", 'yellow'))
             if args.log:
-                logging.info("No FLAC files found.")
+                logging.info("No FLAC files found for verification.")
             sys.exit(0)
         
-        print(colors.colorize(f"Found {len(flac_files)} FLAC files", 'green'))
+        print(colors.colorize(f"Starting verification of {len(flac_files)} FLAC files", 'green'))
         if args.log:
-            logging.info(f"Found {len(flac_files)} FLAC files")
+            logging.info(f"Starting verification of {len(flac_files)} FLAC files")
         
         thread_count = get_optimal_threads()
-        print(f"Starting verification using {thread_count} threads...")
+        print(f"Using {thread_count} threads for verification...")
         if args.log:
-            logging.info(f"Starting verification with {thread_count} threads")
+            logging.info(f"Using {thread_count} threads for verification")
         
         results = {'passed': 0, 'failed': 0, 'no_md5': 0}
         failed_files = []
