@@ -4,16 +4,19 @@ FLAC Integrity Checker - A robust tool for verifying FLAC file integrity
 with parallel processing, comprehensive error reporting, and logging capabilities.
 
 Usage:
-  - To scan current directory: python FICv3.py
-  - To scan specific directory: python FICv3.py -d /path/to/directory
-  - To create a log file: python FICv3.py -l
-  - To scan specific directory and create log: python FICv3.py -d /path/to/directory -l
+  - To scan current directory: python FIC.py
+  - To scan specific directory: python FIC.py -d /path/to/directory
+  - To create a log file: python FIC.py -l
+  - To scan specific directory and create log: python FIC.py -d /path/to/directory -l
+  - Additional options: --max-threads N, --timeout S
 """
 
 import argparse
 import concurrent.futures
-import datetime
+from datetime import datetime
 import logging
+from logging.handlers import QueueHandler, QueueListener
+from queue import Queue
 import multiprocessing
 import os
 import shutil
@@ -30,13 +33,9 @@ try:
 except ImportError:
     tqdm = None
 
-# Constants
-VERSION = "1.2.1"
-MAX_THREADS = 32  # Safety limit for maximum threads
-MAX_RETRIES = 2  # Number of retries for failed operations
+# Constants (now partially configurable)
+VERSION = "1.2.2"
 FILE_READ_CHUNK = 8192  # Chunk size for file reading checks
-FLAC_VERIFY_TIMEOUT = 30  # Seconds for FLAC verification timeout
-MD5_CHECK_TIMEOUT = 10  # Seconds for MD5 check timeout
 
 # Color setup
 class Colors:
@@ -66,8 +65,6 @@ class Colors:
         color_code = getattr(self, color, '')
         return f"{color_code}{text}{self.reset}"
 
-colors = Colors()
-
 class VerificationResult(NamedTuple):
     """Container for verification results"""
     file_path: str
@@ -75,66 +72,59 @@ class VerificationResult(NamedTuple):
     error: Optional[str]
     md5sum: Optional[str] = None
 
-def setup_logging(enable_logging: bool) -> Optional[str]:
-    """Configure logging to file if enabled"""
+def setup_logging(enable_logging: bool, verbose: bool) -> Tuple[Optional[str], Optional[QueueListener]]:
+    """Configure thread-safe logging to file and console if enabled"""
     if not enable_logging:
-        return None
+        return None, None
         
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filename = f"flac_check_{timestamp}.log"
     
-    logging.basicConfig(
-        filename=log_filename,
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    log_queue = Queue()
+    queue_handler = QueueHandler(log_queue)
     
-    # Add console handler for ERROR level and above
-    console = logging.StreamHandler()
-    console.setLevel(logging.ERROR)
-    formatter = logging.Formatter('%(levelname)s - %(message)s')
-    console.setFormatter(formatter)
-    logging.getLogger('').addHandler(console)
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S'))
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.ERROR)
+    console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    
+    logger = logging.getLogger('')
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    logger.addHandler(queue_handler)
+    
+    listener = QueueListener(log_queue, file_handler, console_handler)
+    listener.start()
     
     logging.info(f"FLAC Integrity Checker v{VERSION} started")
-    return log_filename
+    return log_filename, listener
 
-def get_optimal_threads() -> int:
+def get_optimal_threads(max_threads: int) -> int:
     """Calculate optimal number of threads with safety limits."""
     try:
         cpu_count = multiprocessing.cpu_count()
-        # Use 75% of cores with min 1, max MAX_THREADS
-        return min(MAX_THREADS, max(1, int(cpu_count * 0.75)))
-    except (NotImplementedError, ImportError):
+        return min(max_threads, max(1, int(cpu_count * 0.75)))
+    except NotImplementedError:
         return 1  # Fallback to single thread if detection fails
 
 def clean_flac_error(error: str) -> str:
-    """Clean up FLAC error messages."""
-    if not error:
+    """Clean up FLAC error messages with early return."""
+    if not error or not error.strip():
         return ""
     
-    ignore_prefixes = [
-        'flac', 'Copyright', 'welcome to redistribute',
-        'This program is free software', 'For more details'
-    ]
-    
-    return '\n'.join(
-        line.strip() for line in error.splitlines()
-        if not any(line.strip().startswith(prefix) for prefix in ignore_prefixes)
-        and line.strip()
-    )
+    ignore_prefixes = ['flac', 'Copyright', 'welcome to redistribute', 'This program is free software', 'For more details']
+    return '\n'.join(line.strip() for line in error.splitlines() 
+                    if line.strip() and not any(line.strip().startswith(prefix) for prefix in ignore_prefixes))
 
 def is_file_accessible(file_path: str) -> bool:
     """Perform comprehensive checks on file accessibility without modification."""
     try:
         path = Path(file_path)
-        
-        # Basic existence and type check
         if not path.is_file():
             return False
         
-        # Check if file is a symlink
         if path.is_symlink():
             try:
                 real_path = path.resolve(strict=True)
@@ -143,105 +133,80 @@ def is_file_accessible(file_path: str) -> bool:
             except (OSError, RuntimeError):
                 return False
         
-        # Permission check - read-only
         if not os.access(file_path, os.R_OK):
             return False
         
-        # Quick read test without modification
-        try:
-            with path.open('rb') as f:
-                f.read(FILE_READ_CHUNK)
-        except (IOError, OSError, PermissionError):
-            return False
+        with path.open('rb') as f:
+            f.read(FILE_READ_CHUNK)
         
-        # Check file size (0-byte files are invalid)
         return path.stat().st_size > 0
-        
     except (OSError, PermissionError, UnicodeEncodeError):
         return False
 
 def run_command(cmd: List[str], timeout: float, input_data: Optional[str] = None) -> Tuple[int, str, str]:
     """Run a command with timeout and return (returncode, stdout, stderr)"""
+    logging.debug(f"Running command: {' '.join(cmd[:2])}...")
     try:
-        # Log the command being run (excluding file paths for brevity)
-        if logging.getLogger().isEnabledFor(logging.DEBUG):
-            logging.debug(f"Running command: {' '.join(cmd[:2])}...")
-        
         with subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE if input_data else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
         ) as process:
             try:
-                stdout, stderr = process.communicate(
-                    input=input_data,
-                    timeout=timeout
-                )
+                stdout, stderr = process.communicate(input=input_data, timeout=timeout)
                 return process.returncode, stdout, stderr
             except subprocess.TimeoutExpired:
                 process.kill()
                 return -1, "", "Command timed out"
     except FileNotFoundError:
         return -1, "", f"Command not found: {cmd[0]}"
+    except (OSError, subprocess.SubprocessError) as e:
+        return -1, "", f"Subprocess error: {str(e)}"
 
-def verify_flac(file_path: str) -> VerificationResult:
+def verify_flac(file_path: str, timeout: float, max_retries: int, verbose: bool) -> VerificationResult:
     """Verify a FLAC file with comprehensive error handling, ensuring read-only access."""
     last_error = ""
     
-    for attempt in range(MAX_RETRIES + 1):
+    for attempt in range(max_retries + 1):
         try:
             if not is_file_accessible(file_path):
-                if logging.getLogger().isEnabledFor(logging.INFO):
-                    logging.info(f"File inaccessible: {file_path}")
+                logging.info(f"File inaccessible: {file_path}")
                 return VerificationResult(file_path, 'failed', "File inaccessible or unreadable")
             
-            # FLAC verification - using 'flac -t' for read-only testing
-            returncode, _, stderr = run_command(
-                ['flac', '-t', file_path],
-                timeout=FLAC_VERIFY_TIMEOUT
-            )
-            
+            returncode, _, stderr = run_command(['flac', '-t', file_path], timeout=timeout)
             if returncode != 0:
                 error_msg = clean_flac_error(stderr) or "Unknown FLAC error"
-                if logging.getLogger().isEnabledFor(logging.INFO):
-                    logging.info(f"FLAC verification failed for {file_path}: {error_msg}")
+                logging.info(f"FLAC verification failed for {file_path}: {error_msg}")
                 return VerificationResult(file_path, 'failed', error_msg)
             
-            # MD5 check using metaflac (read-only operation)
-            returncode, stdout, stderr = run_command(
-                ['metaflac', '--show-md5sum', file_path],
-                timeout=MD5_CHECK_TIMEOUT
-            )
-            
+            returncode, stdout, stderr = run_command(['metaflac', '--show-md5sum', file_path], timeout=timeout/3)
             if returncode != 0:
-                if attempt == MAX_RETRIES:
-                    if logging.getLogger().isEnabledFor(logging.INFO):
-                        logging.info(f"MD5 check failed for {file_path}")
+                if attempt == max_retries:
+                    logging.info(f"MD5 check failed for {file_path}")
                     return VerificationResult(file_path, 'failed', "MD5 check failed")
                 time.sleep(0.5 * (attempt + 1))
                 continue
                 
             md5 = stdout.strip()
             if not md5 or md5 == '0'*32:
-                if logging.getLogger().isEnabledFor(logging.INFO):
-                    logging.info(f"No MD5 found in {file_path}")
+                logging.info(f"No MD5 found in {file_path}")
                 return VerificationResult(file_path, 'no_md5', None)
             
-            if logging.getLogger().isEnabledFor(logging.DEBUG):
-                logging.debug(f"File passed verification: {file_path}")
+            logging.debug(f"File passed verification: {file_path}")
             return VerificationResult(file_path, 'passed', None, md5)
             
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             last_error = str(e)
-            if attempt == MAX_RETRIES:
+            if attempt == max_retries:
                 error_msg = f"System error: {last_error}"
-                if os.getenv('DEBUG_FLAC_CHECKER'):
+                if verbose:
                     error_msg += f"\n{traceback.format_exc()}"
-                if logging.getLogger().isEnabledFor(logging.ERROR):
-                    logging.error(f"Error processing {file_path}: {error_msg}")
+                logging.error(f"Error processing {file_path}: {error_msg}")
                 return VerificationResult(file_path, 'failed', error_msg)
             time.sleep(0.5 * (attempt + 1))
             
@@ -255,16 +220,14 @@ def find_files(root_dir: str) -> Tuple[List[str], Dict[str, int]]:
     
     try:
         root_path = Path(root_dir).resolve()
-        if logging.getLogger().isEnabledFor(logging.INFO):
-            logging.info(f"Searching for files in: {root_path}")
+        logging.info(f"Searching for files in: {root_path}")
         
-        # Track extensions we want to specifically count
         tracked_extensions = {
-            '.flac', '.mp3', '.wav', '.aac', '.m4a', '.ogg',  # audio
-            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp',  # images
-            '.mp4', '.mkv', '.avi', '.mov', '.wmv',  # video
-            '.lrc', '.txt', '.log', '.cue', '.pdf',  # text/docs
-            '.zip', '.rar', '.7z', '.tar', '.gz'  # archives
+            '.flac', '.mp3', '.wav', '.aac', '.m4a', '.ogg',
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp',
+            '.mp4', '.mkv', '.avi', '.mov', '.wmv',
+            '.lrc', '.txt', '.log', '.cue', '.pdf',
+            '.zip', '.rar', '.7z', '.tar', '.gz'
         }
         
         for path in root_path.rglob('*'):
@@ -272,52 +235,39 @@ def find_files(root_dir: str) -> Tuple[List[str], Dict[str, int]]:
                 if path.is_file() and is_file_accessible(str(path)):
                     total_files += 1
                     ext = path.suffix.lower()
-                    
-                    # Count all extensions, but for display, prioritize tracked ones
                     if ext in tracked_extensions:
                         file_types[ext] += 1
                     else:
                         file_types['other'] += 1
                     
-                    # Add FLAC files to the processing list
                     if ext == '.flac':
                         flac_files.append(str(path))
-                        if logging.getLogger().isEnabledFor(logging.DEBUG):
-                            logging.debug(f"Found FLAC file: {path}")
+                        logging.debug(f"Found FLAC file: {path}")
             except (OSError, PermissionError, UnicodeError) as e:
-                if logging.getLogger().isEnabledFor(logging.DEBUG):
-                    logging.debug(f"Error accessing {path}: {str(e)}")
+                logging.debug(f"Error accessing {path}: {str(e)}")
                 continue
     
-    except Exception as e:
-        if logging.getLogger().isEnabledFor(logging.ERROR):
-            logging.error(f"Error scanning directory {root_dir}: {str(e)}")
+    except (OSError, PermissionError) as e:
+        logging.error(f"Error scanning directory {root_dir}: {str(e)}")
     
-    # Add total count
     file_types['total'] = total_files
-    
     return flac_files, file_types
 
-def check_dependencies() -> bool:
+def check_dependencies(colors: Colors) -> bool:
     """Verify required tools are available in system PATH."""
     required_tools = ['flac', 'metaflac']
-    missing = []
-    
-    for cmd in required_tools:
-        if not shutil.which(cmd):
-            missing.append(cmd)
+    missing = [cmd for cmd in required_tools if not shutil.which(cmd)]
     
     if missing:
         print(colors.colorize("Error: The following tools are required but not found:", 'orange_red'))
         for cmd in missing:
             print(f"  • {cmd}")
         
-        # Additional help message for common platforms
         if 'flac' in missing or 'metaflac' in missing:
             print("\nInstallation help:")
             if sys.platform == 'win32':
                 print("  Windows: Download FLAC from https://xiph.org/flac/download.html")
-                print("           Make sure to add it to your PATH or place in the same directory")
+                print("           Add to PATH or place in the same directory")
             elif sys.platform == 'darwin':
                 print("  macOS: Install with Homebrew: brew install flac")
             else:
@@ -326,23 +276,20 @@ def check_dependencies() -> bool:
                 print("         Fedora: sudo dnf install flac")
                 print("         Arch: sudo pacman -S flac")
         
-        if logging.getLogger().isEnabledFor(logging.ERROR):
-            logging.error(f"Missing required tools: {', '.join(missing)}")
+        logging.error(f"Missing required tools: {', '.join(missing)}")
         return False
-        
     return True
 
-def print_header(version: str) -> None:
+def print_header(version: str, colors: Colors) -> None:
     """Print the program header with version information."""
     width = 80
     title = f"FLAC INTEGRITY CHECKER v{version}"
-    
     print("\n" + "=" * width)
     print(colors.colorize(title.center(width), 'purple'))
     print(colors.colorize("Verify the integrity of your FLAC audio files".center(width), 'purple'))
     print("=" * width + "\n")
 
-def print_file_table(file_types: Dict[str, int]) -> None:
+def print_file_table(file_types: Dict[str, int], colors: Colors) -> None:
     """Print a table of file types found during scanning."""
     if not file_types:
         return
@@ -350,10 +297,6 @@ def print_file_table(file_types: Dict[str, int]) -> None:
     width = 60
     print(f"\n{' Files Found ':-^{width}}")
     
-    # Format table rows
-    table_data = []
-    
-    # Organize extensions into categories
     categories = {
         "Audio": ['.flac', '.mp3', '.wav', '.aac', '.m4a', '.ogg'],
         "Images": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'],
@@ -362,11 +305,9 @@ def print_file_table(file_types: Dict[str, int]) -> None:
         "Archives": ['.zip', '.rar', '.7z', '.tar', '.gz'],
     }
     
-    # Print by category
     for category, extensions in categories.items():
         category_count = 0
         category_items = []
-        
         for ext in extensions:
             count = file_types.get(ext, 0)
             if count > 0:
@@ -375,27 +316,22 @@ def print_file_table(file_types: Dict[str, int]) -> None:
         
         if category_count > 0:
             print(colors.colorize(f"{category}:", 'purple'))
-            # Print in rows of 3 items
             items_per_row = 3
             for i in range(0, len(category_items), items_per_row):
                 row_items = category_items[i:i+items_per_row]
                 print("  " + "  ".join(f"{item:<15}" for item in row_items))
     
-    # Print other files if any
     other_count = file_types.get('other', 0)
     if other_count > 0:
         print(colors.colorize("Other:", 'purple'))
         print(f"  Other files: {other_count}")
     
-    # Print total
     print("-" * width)
     print(colors.colorize(f"Total files: {file_types.get('total', 0)}", 'green'))
     print("-" * width + "\n")
 
-def print_summary(results: Dict[str, int], 
-                failed_files: List[Tuple[str, str]], 
-                no_md5_files: List[str],
-                log_filename: Optional[str] = None) -> None:
+def print_summary(results: Dict[str, int], failed_files: List[Tuple[str, str]], 
+                 no_md5_files: List[str], log_filename: Optional[str], colors: Colors) -> None:
     """Print comprehensive summary of verification results."""
     total = sum(results.values())
     width = 80
@@ -410,7 +346,6 @@ def print_summary(results: Dict[str, int],
         print(colors.colorize(f"Log file created: {log_filename}", 'purple'))
     
     print('-' * width)
-
     if results['failed']:
         print(colors.colorize("Failed files:", 'orange_red'))
         for i, (file, error) in enumerate(failed_files, 1):
@@ -429,108 +364,60 @@ def print_summary(results: Dict[str, int],
         print('-' * width)
 
 def normalize_path(path: str) -> str:
-    """
-    Normalize path by handling quotes, trailing slashes and converting to absolute path properly.
-    Works with both Windows and Unix-style paths.
-    """
-    if not path:
+    """Normalize path with input validation."""
+    if not isinstance(path, str) or not path.strip():
         return os.path.abspath('.')
     
-    # Remove any surrounding quotes that might have been passed through
     path = path.strip('"\'')
-    
-    # Handle paths with spaces or special characters
     try:
-        # Convert to Path object which handles OS-specific path formatting
         path_obj = Path(path)
-        
-        # Convert back to string and get absolute path
-        abs_path = os.path.abspath(str(path_obj))
-        
-        return abs_path
-    except Exception as e:
-        # If there's any error, fall back to a simple approach
+        return os.path.abspath(str(path_obj))
+    except (ValueError, OSError) as e:
+        logging.warning(f"Invalid path {path}: {str(e)}")
         return os.path.abspath(path)
 
 def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments."""
+    """Parse command-line arguments with added options."""
     parser = argparse.ArgumentParser(
         description=f"FLAC Integrity Checker v{VERSION} - Verify the integrity of FLAC audio files",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    
-    parser.add_argument('-d', '--directory', 
-                        help='Directory to scan (default: current directory)', 
-                        default='.')
-    
-    parser.add_argument('-l', '--log', 
-                        action='store_true',
-                        help='Create a log file of the verification process')
-    
-    parser.add_argument('-v', '--verbose', 
-                        action='store_true',
-                        help='Enable verbose output')
-    
-    parser.add_argument('--version', 
-                        action='version', 
-                        version=f'FLAC Integrity Checker v{VERSION}')
-    
+    parser.add_argument('-d', '--directory', help='Directory to scan', default='.')
+    parser.add_argument('-l', '--log', action='store_true', help='Create a log file')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
+    parser.add_argument('--max-threads', type=int, default=32, help='Maximum number of threads')
+    parser.add_argument('--timeout', type=int, default=30, help='Timeout for FLAC verification in seconds')
+    parser.add_argument('--max-retries', type=int, default=2, help='Number of retries for failed operations')
+    parser.add_argument('--version', action='version', version=f'FLAC Integrity Checker v{VERSION}')
     return parser.parse_args()
 
 def main() -> None:
     """Main execution function."""
     try:
         args = parse_arguments()
+        colors = Colors()
         
-        # Setup logging if enabled
-        log_file = None
-        if args.log:
-            log_level = logging.DEBUG if args.verbose else logging.INFO
-            log_file = setup_logging(True)
-            logging.getLogger().setLevel(log_level)
+        log_file, log_listener = setup_logging(args.log, args.verbose)
+        if args.log and log_listener:
+            logging.getLogger().setLevel(logging.DEBUG if args.verbose else logging.INFO)
         
-        # Print header
-        print_header(VERSION)
-        
-        # Check dependencies
-        if not check_dependencies():
+        print_header(VERSION, colors)
+        if not check_dependencies(colors):
             sys.exit(1)
         
-        # Get target directory - properly normalize the path
-        try:
-            target_dir = normalize_path(args.directory)
-            print(f"Target directory: {target_dir}")
-            
-            # Check if directory exists
-            if not os.path.isdir(target_dir):
-                print(colors.colorize(f"Error: Directory not found: {target_dir}", 'orange_red'))
-                print(colors.colorize("Try using double quotes around directory paths with spaces:", 'orange_red'))
-                print(f'  Example: python {sys.argv[0]} -d "Your Folder Name"')
-                
-                if args.log:
-                    logging.error(f"Directory not found: {target_dir}")
-                sys.exit(1)
-        except Exception as e:
-            print(colors.colorize(f"Error processing directory path: {str(e)}", 'orange_red'))
-            print(colors.colorize("Try using double quotes around directory paths with spaces:", 'orange_red'))
+        target_dir = normalize_path(args.directory)
+        print(f"Target directory: {target_dir}")
+        if not os.path.isdir(target_dir):
+            print(colors.colorize(f"Error: Directory not found: {target_dir}", 'orange_red'))
+            print(colors.colorize("Try using double quotes around paths with spaces:", 'orange_red'))
             print(f'  Example: python {sys.argv[0]} -d "Your Folder Name"')
-            
             if args.log:
-                logging.error(f"Error processing directory path: {str(e)}")
+                logging.error(f"Directory not found: {target_dir}")
             sys.exit(1)
             
         print("Searching for files...")
-        
-        try:
-            flac_files, file_types = find_files(target_dir)
-        except Exception as e:
-            print(colors.colorize(f"Error searching for files: {str(e)}", 'orange_red'))
-            if args.log:
-                logging.error(f"Error searching for files: {str(e)}")
-            sys.exit(1)
-        
-        # Print file type statistics
-        print_file_table(file_types)
+        flac_files, file_types = find_files(target_dir)
+        print_file_table(file_types, colors)
         
         if not flac_files:
             print(colors.colorize("No FLAC files found for verification.", 'yellow'))
@@ -538,11 +425,14 @@ def main() -> None:
                 logging.info("No FLAC files found for verification.")
             sys.exit(0)
         
+        if not tqdm and args.verbose:
+            print(colors.colorize("Progress bar unavailable: install 'tqdm' for progress tracking.", 'yellow'))
+        
         print(colors.colorize(f"Starting verification of {len(flac_files)} FLAC files", 'green'))
         if args.log:
             logging.info(f"Starting verification of {len(flac_files)} FLAC files")
         
-        thread_count = get_optimal_threads()
+        thread_count = get_optimal_threads(args.max_threads)
         print(f"Using {thread_count} threads for verification...")
         if args.log:
             logging.info(f"Using {thread_count} threads for verification")
@@ -551,88 +441,66 @@ def main() -> None:
         failed_files = []
         no_md5_files = []
         
-        try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=thread_count,
-                thread_name_prefix='flac_verify'
-            ) as executor:
-                futures = {executor.submit(verify_flac, f): f for f in flac_files}
-                
-                # Progress bar if tqdm is available
-                progress_bar = None
-                if tqdm:
-                    progress_bar = tqdm(
-                        total=len(futures),
-                        unit="file",
-                        leave=True,
-                        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
-                    )
-                
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        result = future.result()
-                        if result.status == 'passed':
-                            results['passed'] += 1
-                            if args.log and args.verbose:
-                                logging.debug(f"Passed: {result.file_path}")
-                        elif result.status == 'failed':
-                            results['failed'] += 1
-                            failed_files.append((result.file_path, result.error or ""))
-                            if args.log:
-                                logging.warning(f"Failed: {result.file_path} - {result.error}")
-                        else:
-                            results['no_md5'] += 1
-                            no_md5_files.append(result.file_path)
-                            if args.log:
-                                logging.info(f"No MD5: {result.file_path}")
-                    except Exception as e:
-                        file = futures[future]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count, thread_name_prefix='flac_verify') as executor:
+            futures = {executor.submit(verify_flac, f, args.timeout, args.max_retries, args.verbose): f for f in flac_files}
+            progress_bar = tqdm(total=len(futures), unit="file", leave=True, 
+                               bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") if tqdm else None
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    if result.status == 'passed':
+                        results['passed'] += 1
+                        if args.log and args.verbose:
+                            logging.debug(f"Passed: {result.file_path}")
+                    elif result.status == 'failed':
                         results['failed'] += 1
-                        error_msg = f"Processing error: {str(e)}"
-                        failed_files.append((file, error_msg))
+                        failed_files.append((result.file_path, result.error or ""))
                         if args.log:
-                            logging.error(f"Error processing {file}: {str(e)}")
-                    finally:
-                        if progress_bar:
-                            progress_bar.update(1)
-                
-                if progress_bar:
-                    progress_bar.close()
-        
-        except KeyboardInterrupt:
-            print(colors.colorize("\nVerification interrupted by user.", 'orange_red'))
-            if args.log:
-                logging.warning("Verification interrupted by user")
-            sys.exit(1)
-        except Exception as e:
-            print(colors.colorize(f"\nError during verification: {str(e)}", 'orange_red'))
-            if args.log:
-                logging.error(f"Error during verification: {str(e)}")
-                if os.getenv('DEBUG_FLAC_CHECKER'):
-                    logging.error(traceback.format_exc())
-            sys.exit(1)
+                            logging.warning(f"Failed: {result.file_path} - {result.error}")
+                    else:
+                        results['no_md5'] += 1
+                        no_md5_files.append(result.file_path)
+                        if args.log:
+                            logging.info(f"No MD5: {result.file_path}")
+                except (OSError, subprocess.SubprocessError) as e:
+                    file = futures[future]
+                    results['failed'] += 1
+                    error_msg = f"Processing error: {str(e)}"
+                    failed_files.append((file, error_msg))
+                    if args.log:
+                        logging.error(f"Error processing {file}: {str(e)}")
+                finally:
+                    if progress_bar:
+                        progress_bar.update(1)
+            
+            if progress_bar:
+                progress_bar.close()
         
         print(colors.colorize("\nVerification Complete", 'purple'))
         if args.log:
             logging.info("Verification Complete")
             logging.info(f"Results: Passed={results['passed']}, Failed={results['failed']}, No MD5={results['no_md5']}")
         
-        print_summary(results, failed_files, no_md5_files, log_file)
+        print_summary(results, failed_files, no_md5_files, log_file, colors)
+        if log_listener:
+            log_listener.stop()
         
-        # Exit with error code if any failures were found
         sys.exit(1 if results['failed'] else 0)
         
     except KeyboardInterrupt:
         print(colors.colorize("\nOperation cancelled by user.", 'orange_red'))
-        if 'logging' in sys.modules and logging.getLogger().hasHandlers():
+        if args.log:
             logging.warning("Operation cancelled by user")
+        if 'log_listener' in locals() and log_listener:
+            log_listener.stop()
         sys.exit(1)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(colors.colorize(f"\nUnexpected error: {str(e)}", 'orange_red'))
-        if 'logging' in sys.modules and logging.getLogger().hasHandlers():
+        if args.log:
             logging.critical(f"Unexpected error: {str(e)}")
-            if os.getenv('DEBUG_FLAC_CHECKER'):
-                logging.critical(traceback.format_exc())
+        if 'log_listener' in locals() and log_listener:
+            log_listener.stop()
         sys.exit(1)
 
 if __name__ == "__main__":
