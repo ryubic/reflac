@@ -1,5 +1,12 @@
 # FLAC Integrity Checker Changelog
 
+## Version 1.4 (June 1, 2025)
+- **Enhancements:**
+  - Renamed the file from FIC.py to fic.py so the user doesn't have to capitalize the first letter for auto complete to work in some shells
+- **Code Quality Improvements:**
+  - Removed the unnecessery import of datetime module
+  - Thats all, and dont ask why the version number is 1.4 haha
+
 ## Version 1.2.2 (April 08, 2025)
 - **Enhancements:**
   - Added command-line options `--max-threads`, `--timeout`, and `--max-retries` to make thread count, verification timeout, and retry attempts configurable (previously hardcoded).

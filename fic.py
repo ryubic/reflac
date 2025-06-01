@@ -4,16 +4,15 @@ FLAC Integrity Checker - A robust tool for verifying FLAC file integrity
 with parallel processing, comprehensive error reporting, and logging capabilities.
 
 Usage:
-  - To scan current directory: python FIC.py
-  - To scan specific directory: python FIC.py -d /path/to/directory
-  - To create a log file: python FIC.py -l
-  - To scan specific directory and create log: python FIC.py -d /path/to/directory -l
+  - To scan current directory: python fic.py
+  - To scan specific directory: python fic.py -d /path/to/directory
+  - To create a log file: python fic.py -l
+  - To scan specific directory and create log: python fic.py -d /path/to/directory -l
   - Additional options: --max-threads N, --timeout S
 """
 
 import argparse
 import concurrent.futures
-from datetime import datetime
 import logging
 from logging.handlers import QueueHandler, QueueListener
 from queue import Queue
@@ -33,8 +32,7 @@ try:
 except ImportError:
     tqdm = None
 
-# Constants (now partially configurable)
-VERSION = "1.2.2"
+VERSION = "1.4"
 FILE_READ_CHUNK = 8192  # Chunk size for file reading checks
 
 # Color setup
@@ -52,11 +50,11 @@ class Colors:
             self.orange_red = '\033[38;5;202m'  # Error color
             self.yellow = '\033[38;5;185m'      # Warning color (no MD5)
             self.green = '\033[92m'             # Success color
-            self.purple = '\033[38;5;147m'      # Info/header color
+            self.lavender = '\033[38;5;147m'      # Info/header color
             self.reset = Style.RESET_ALL
         except ImportError:
             self.enabled = False
-            self.orange_red = self.yellow = self.green = self.purple = self.reset = ''
+            self.orange_red = self.yellow = self.green = self.lavender = self.reset = ''
 
     def colorize(self, text: str, color: str) -> str:
         """Apply color to text if enabled"""
@@ -77,7 +75,7 @@ def setup_logging(enable_logging: bool, verbose: bool) -> Tuple[Optional[str], O
     if not enable_logging:
         return None, None
         
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
     log_filename = f"flac_check_{timestamp}.log"
     
     log_queue = Queue()
@@ -107,6 +105,7 @@ def get_optimal_threads(max_threads: int) -> int:
         cpu_count = multiprocessing.cpu_count()
         return min(max_threads, max(1, int(cpu_count * 0.75)))
     except NotImplementedError:
+        logging.info(f"Thread detection failed: falling back to single thread")
         return 1  # Fallback to single thread if detection fails
 
 def clean_flac_error(error: str) -> str:
@@ -285,8 +284,8 @@ def print_header(version: str, colors: Colors) -> None:
     width = 80
     title = f"FLAC INTEGRITY CHECKER v{version}"
     print("\n" + "=" * width)
-    print(colors.colorize(title.center(width), 'purple'))
-    print(colors.colorize("Verify the integrity of your FLAC audio files".center(width), 'purple'))
+    print(colors.colorize(title.center(width), 'lavender'))
+    print(colors.colorize("Verify the integrity of your FLAC audio files".center(width), 'lavender'))
     print("=" * width + "\n")
 
 def print_file_table(file_types: Dict[str, int], colors: Colors) -> None:
@@ -315,7 +314,7 @@ def print_file_table(file_types: Dict[str, int], colors: Colors) -> None:
                 category_items.append(f"{ext[1:]}: {count}")
         
         if category_count > 0:
-            print(colors.colorize(f"{category}:", 'purple'))
+            print(colors.colorize(f"{category}:", 'lavender'))
             items_per_row = 3
             for i in range(0, len(category_items), items_per_row):
                 row_items = category_items[i:i+items_per_row]
@@ -323,7 +322,7 @@ def print_file_table(file_types: Dict[str, int], colors: Colors) -> None:
     
     other_count = file_types.get('other', 0)
     if other_count > 0:
-        print(colors.colorize("Other:", 'purple'))
+        print(colors.colorize("Other:", 'lavender'))
         print(f"  Other files: {other_count}")
     
     print("-" * width)
@@ -343,7 +342,7 @@ def print_summary(results: Dict[str, int], failed_files: List[Tuple[str, str]],
     print(colors.colorize(f"Files without MD5: {results['no_md5']}", 'yellow'))
     
     if log_filename:
-        print(colors.colorize(f"Log file created: {log_filename}", 'purple'))
+        print(colors.colorize(f"Log file created: {log_filename}", 'lavender'))
     
     print('-' * width)
     if results['failed']:
@@ -477,7 +476,7 @@ def main() -> None:
             if progress_bar:
                 progress_bar.close()
         
-        print(colors.colorize("\nVerification Complete", 'purple'))
+        print(colors.colorize("\nVerification Complete", 'lavender'))
         if args.log:
             logging.info("Verification Complete")
             logging.info(f"Results: Passed={results['passed']}, Failed={results['failed']}, No MD5={results['no_md5']}")
