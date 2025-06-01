@@ -1,8 +1,4 @@
-# FLAC Integrity Checker (FIC)
-
-![Python 3.6+](https://img.shields.io/badge/python-3.6+-lemon.svg)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.4-gold.svg)](https://github.com/ryubic/reflac)
+# FLAC Integrity Checker (fic.py)
 
 A robust, multi-threaded Python script to verify the integrity of FLAC audio files using `flac` and `metaflac`. It offers colored output, optional logging, smart error handling, file-type summaries, and runs in parallel for speed and efficiency.
 
@@ -110,7 +106,7 @@ brew install flac
 
 ---
 
-# recompress
+# FLAC Recompressor / fix unset MD5 (recompress.py)
 
 A Python script to recompress FLAC audio files in a specified directory using the FLAC command-line tool. It processes files in parallel with a configurable compression level and provides a progress bar with success/failure tracking.
 
